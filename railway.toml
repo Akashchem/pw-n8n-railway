@@ -3,12 +3,9 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "n8n start"
+# Railway injects $PORT — n8n must bind to it
+startCommand = "N8N_PORT=$PORT n8n start"
 healthcheckPath = "/healthz"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 5
-
-[[deploy.envs]]
-# All sensitive values are set via Railway dashboard Variables, not here.
-# See .env.example for required variables.
