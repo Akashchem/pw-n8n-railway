@@ -1,0 +1,2472 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jotform-campaign-request",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c47551a6-a797-474a-a981-2422acd254ad",
+      "name": "Jotform Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        128
+      ],
+      "webhookId": "jotform-campaign-request"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Submission received. You will be notified once approved.",
+        "options": {}
+      },
+      "id": "7932b263-d817-4bfb-aac6-4cb77745b7ab",
+      "name": "Respond to Jotform",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\n// Parse rawRequest JSON - most reliable source from Jotform\nlet raw = {};\ntry {\n  raw = JSON.parse(body.rawRequest || '{}');\n} catch (e) {\n  raw = {};\n}\n\nconst submissionId = 'CAMP-' + Date.now();\n\n// Extract metadata from rawRequest\nconst requesterEmail = String(raw['q3_q3_email1'] || '')\n  .replace(/^PW Official Email:/i, '')\n  .trim();\n\nconst requesterNameObj = raw['q4_q4_fullname2'] || {};\nconst requesterName = `${requesterNameObj.first || ''} ${requesterNameObj.last || ''}`.trim() || 'Unknown';\n\nconst team = raw['q5_q5_dropdown3'] || '';\nconst approverEmail = String(raw['q6_q6_email4'] || '').trim();\nconst commType = raw['q7_q7_dropdown5'] || 'Utility';\nconst channel = raw['q8_q8_dropdown6'] || 'WhatsApp';\nconst templateName = raw['q9_q9_dropdown7'] || '';\n\nconst audienceCount = raw['q20_q20_number18'] || '0';\nconst additionalInstructions = raw['q23_q23_textarea21'] || '';\nconst department = '';\nconst dataType = 'Phone Numbers';\n\n// Audience file link\nlet audienceFileLink = raw['q19_q19_textarea17'] || raw['q19_q19_textbox17'] || '';\naudienceFileLink = String(audienceFileLink).trim();\n\n// Convert Google Sheets link to CSV export URL and preserve gid\nif (audienceFileLink.includes('spreadsheets/d/')) {\n  const sheetIdMatch = audienceFileLink.match(/spreadsheets\\/d\\/([a-zA-Z0-9_-]+)/);\n  const gidMatch = audienceFileLink.match(/[?&]gid=([0-9]+)/);\n\n  if (sheetIdMatch) {\n    const sheetId = sheetIdMatch[1];\n    const gid = gidMatch ? gidMatch[1] : '0';\n    audienceFileLink = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;\n  }\n}\n\n// Convert Google Drive file link to direct download URL\nelse if (audienceFileLink.includes('drive.google.com')) {\n  const match1 = audienceFileLink.match(/\\/file\\/d\\/([a-zA-Z0-9_-]+)/);\n  const match2 = audienceFileLink.match(/[?&]id=([a-zA-Z0-9_-]+)/);\n  const match3 = audienceFileLink.match(/\\/d\\/([a-zA-Z0-9_-]+)/);\n\n  const fileId = (match1 || match2 || match3 || [])[1];\n\n  if (fileId) {\n    audienceFileLink = `https://drive.google.com/uc?export=download&id=${fileId}`;\n  }\n}\n\n// Scheduled date\nconst scheduledDateObj = raw['q21_q21_datetime19'] || {};\nconst scheduledDate = scheduledDateObj.month && scheduledDateObj.day && scheduledDateObj.year\n  ? `${String(scheduledDateObj.month).padStart(2, '0')} ${String(scheduledDateObj.day).padStart(2, '0')} ${scheduledDateObj.year}`\n  : '';\n\n// Scheduled time\nconst scheduledTimeObj = raw['q22_q22_time20'] || {};\nconst scheduledTimeRaw = scheduledTimeObj.timeInput || '';\nconst scheduledAmPm = scheduledTimeObj.ampm || '';\n\n// Build scheduled datetime with IST handling\nlet scheduledAt;\n\nif (scheduledDate && scheduledTimeRaw) {\n  let [hours, minutes] = scheduledTimeRaw.split(':').map(Number);\n\n  if (scheduledAmPm === 'PM' && hours !== 12) hours += 12;\n  if (scheduledAmPm === 'AM' && hours === 12) hours = 0;\n\n  const hh = String(hours).padStart(2, '0');\n  const mm = String(minutes || 0).padStart(2, '0');\n\n  scheduledAt = `${scheduledDate} ${hh}:${mm} IST`;\n} else {\n  scheduledAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();\n}\n\n// Template mapping\n// Important: variables are NOT taken from Jotform now.\n// requiredColumns defines what the uploaded CSV/sheet must contain.\nconst templateMapping = {\n  'Activity Reminder': {\n    campaignName: 'generic_activity_reminder',\n    requiredColumns: ['phone', 'var1', 'var2', 'var3', 'var4', 'var5', 'var6', 'var7'],\n    samplePreview: `Dear Parent,\n\nThis is to inform you that Parent Teacher Meeting has been scheduled.\n\nDate: 10 June 2026\nTime: 4:00 PM\nLocation/Mode: Noida Vidyapeeth\n\nPlease attend on time.\n\nThanks,\nPW Vidyapeeth`\n  },\n\n  'Payment Reminder': {\n    campaignName: 'generic_payment_reminder',\n    requiredColumns: ['phone', 'var1', 'var2', 'var3', 'var4', 'var5', 'var6'],\n    samplePreview: `Dear Student,\n\nThis is a reminder that your EMI payment for Course is pending.\n\nPlease complete the payment by 10 June 2026.\n\nFor queries, contact support.\n\nThanks,\nPW`\n  },\n\n  'Info Update': {\n    campaignName: 'generic_info_update',\n    requiredColumns: ['phone', 'var1', 'var2', 'var3', 'var4'],\n    samplePreview: `Dear Student,\n\nThis is to inform you that your update is available.\n\nPlease check your PW App for details.\n\nThanks,\nPW`\n  },\n\n  'Test/Result Update': {\n    campaignName: 'generic_test_result_update',\n    requiredColumns: ['phone', 'var1', 'var2', 'var3', 'var4', 'var5', 'var6', 'var7'],\n    samplePreview: `Dear Parent,\n\nThis is to inform you that the test result is available.\n\nAssessment: Weekly Test\nDate: 10 June 2026\nDetails: Please check the PW App.\n\nFor queries contact support.\n\nThanks,\nPW Vidyapeeth`\n  },\n\n  'Order/Service Update': {\n    campaignName: 'generic_order_service_update',\n    requiredColumns: ['phone', 'var1', 'var2', 'var3', 'var4', 'var5'],\n    samplePreview: `Dear Student,\n\nThis is to inform you that your order status has been updated.\n\nOrder/Request Details: Sample Order ID\n\nNext Step: Please confirm your details.\n\nThanks,\nPhysicsWallah`\n  }\n};\n\nconst tmpl = templateMapping[templateName] || null;\n\n// Map team to WABA\nconst wabaMapping = {\n  'Vidyapeeth (Marketing)': { userName: 'PW VP', wabaNumber: '919319294193' },\n  'Vidyapeeth (Marketing Utility)': { userName: 'PW VP', wabaNumber: '919319294193' },\n  'Vidyapeeth (Ops)': { userName: 'PW VP', wabaNumber: '919319294193' },\n\n  'ECOM': { userName: 'PhysicsWallah', wabaNumber: '918130960280' },\n\n  'Pw Skills': { userName: 'PhysicsWallah', wabaNumber: '918130960280' },\n  'PW Skills': { userName: 'PhysicsWallah', wabaNumber: '918130960280' },\n  'Pw Skills Ops': { userName: 'PhysicsWallah', wabaNumber: '918130960280' },\n  'PW Skills Ops': { userName: 'PhysicsWallah', wabaNumber: '918130960280' },\n\n  'PW Tuition centre': { userName: 'PW Tuition Center', wabaNumber: '919599368942' },\n  'PW Tuition Centre': { userName: 'PW Tuition Center', wabaNumber: '919599368942' }\n};\n\nconst defaultWaba = { userName: 'PhysicsWallah', wabaNumber: '918130960280' };\nconst waba = wabaMapping[team] || defaultWaba;\n\nlet campaignName = '';\nlet templateParams = [];\nlet messagePreview = '';\nlet status = 'Pending';\n\nif (tmpl) {\n  campaignName = tmpl.campaignName;\n\n  // Temporary storage: required CSV columns.\n  // Actual templateParams will be generated row-wise from CSV later.\n  templateParams = tmpl.requiredColumns;\n\n  messagePreview = `${tmpl.samplePreview}\n\nRequired CSV columns:\n${tmpl.requiredColumns.join(', ')}`;\n} else {\n  status = 'Validation Failed';\n  messagePreview = `Unsupported template selected: ${templateName}. This request needs manual review.`;\n}\n\nreturn [{\n  json: {\n    submissionId,\n    requesterName,\n    requesterEmail,\n    approverEmail,\n    team,\n    department,\n    commType,\n    channel,\n    dataType,\n    audienceFileLink,\n    audienceCount,\n    scheduledAt,\n    templateName,\n    campaignName,\n    templateParams: JSON.stringify(templateParams),\n    messagePreview,\n    userName: waba.userName,\n    wabaNumber: waba.wabaNumber,\n    additionalInstructions,\n    status,\n    submittedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "27eeee30-b8df-4cd7-897c-71a3321dad88",
+      "name": "Parse Submission",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1n1Q4g6TmW1jCtIhkbMnRvRe3Ch11-gkmJi7bgBug2mo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Campaigns",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Submission ID",
+              "displayName": "Submission ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Submitted At",
+              "displayName": "Submitted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Requester Name",
+              "displayName": "Requester Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Requester Email",
+              "displayName": "Requester Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Approver Email",
+              "displayName": "Approver Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Team",
+              "displayName": "Team",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Template",
+              "displayName": "Template",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Campaign Name",
+              "displayName": "Campaign Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Message Preview",
+              "displayName": "Message Preview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Audience File Link",
+              "displayName": "Audience File Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Audience Count",
+              "displayName": "Audience Count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Scheduled At",
+              "displayName": "Scheduled At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "WABA",
+              "displayName": "WABA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Approve Link",
+              "displayName": "Approve Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Reject Link",
+              "displayName": "Reject Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Sent At",
+              "displayName": "Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Error",
+              "displayName": "Error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "2312460e-ee92-46fa-930d-d54902d03f99",
+      "name": "Log to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        432,
+        128
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OuSB67H5iSmdFF2A",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.approverEmail }}",
+        "subject": "=[Action Required] WhatsApp Campaign Approval — {{ $json.team }} | {{ $json.templateName }}",
+        "message": "=<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>\n  <h2 style='color: #1a1a2e;'>📋 Campaign Approval Request</h2>\n  <p>Hi,</p>\n  <p><strong>{{ $json.requesterName }}</strong> from <strong>{{ $json.team }}</strong> has submitted a WhatsApp campaign request that requires your approval.</p>\n  \n  <table style='width:100%; border-collapse: collapse; margin: 20px 0;'>\n    <tr style='background:#f5f5f5'><td style='padding:8px; border:1px solid #ddd;'><strong>Submission ID</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $json.submissionId }}</td></tr>\n    <tr><td style='padding:8px; border:1px solid #ddd;'><strong>Team</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $json.team }}</td></tr>\n    <tr style='background:#f5f5f5'><td style='padding:8px; border:1px solid #ddd;'><strong>Template</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $json.templateName }}</td></tr>\n    <tr><td style='padding:8px; border:1px solid #ddd;'><strong>Audience Count</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $json.audienceCount }}</td></tr>\n    <tr style='background:#f5f5f5'><td style='padding:8px; border:1px solid #ddd;'><strong>Scheduled At</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $json.scheduledAt }}</td></tr>\n    <tr><td style='padding:8px; border:1px solid #ddd;'><strong>WABA</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $json.userName }} ({{ $json.wabaNumber }})</td></tr>\n  </table>\n\n  <h3 style='color: #1a1a2e;'>📱 Sample Message Preview</h3>\n<p style='color:#666; font-size:13px; margin-top:-5px;'>\n  This is a sample preview of the selected template. Final values will be populated row-wise from the uploaded audience CSV.\n</p>\n<div style='background:#dcf8c6; padding:15px; border-radius:10px; font-family:monospace; white-space:pre-wrap; border-left:4px solid #25d366;'>{{ $json.messagePreview }}</div>\n\n  <div style='margin: 30px 0; text-align: center;'>\n    <a href='https://clmpwdrip.app.n8n.cloud/webhook/approve?id={{ $json.submissionId }}' \n       style='background:#25d366; color:white; padding:14px 30px; text-decoration:none; border-radius:6px; font-size:16px; margin-right:15px; display:inline-block;'>\n      ✅ APPROVE\n    </a>\n    <a href='https://clmpwdrip.app.n8n.cloud/webhook/reject?id={{ $json.submissionId }}' \n       style='background:#e74c3c; color:white; padding:14px 30px; text-decoration:none; border-radius:6px; font-size:16px; display:inline-block;'>\n      ❌ REJECT\n    </a>\n  </div>\n\n  <p style='color:#999; font-size:12px;'>This is an automated message from PW Campaign Automation. Do not reply to this email.</p>\n</div>",
+        "options": {}
+      },
+      "id": "17c9fc91-807d-45c0-8fa8-dcb9d629ef6e",
+      "name": "Send Approval Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        640,
+        128
+      ],
+      "webhookId": "97a38a50-4a0f-455d-b523-c1647ce8f1da",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "p5WKLG6UxWahjX5X",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "approve",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "252f61c7-cb0a-4bb3-9e28-778916c4d4b2",
+      "name": "Approval Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        432
+      ],
+      "webhookId": "approve"
+    },
+    {
+      "parameters": {
+        "path": "reject",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "07b6a916-ff66-4000-8b4c-e3d5d8ec0f08",
+      "name": "Rejection Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        624
+      ],
+      "webhookId": "reject"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "✅ Campaign APPROVED successfully. It will be sent at the scheduled time.",
+        "options": {}
+      },
+      "id": "1f7d0a9b-13be-4075-8992-05935bd3663c",
+      "name": "Respond Approved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "❌ Campaign REJECTED. The requester will be notified.",
+        "options": {}
+      },
+      "id": "c5c39802-9af7-4f4c-9fac-27d0f8144d54",
+      "name": "Respond Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1n1Q4g6TmW1jCtIhkbMnRvRe3Ch11-gkmJi7bgBug2mo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Campaigns",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "Approved",
+            "submissionId": "={{ $json.query.id }}"
+          },
+          "matchingColumns": [
+            "submissionId"
+          ],
+          "schema": [
+            {
+              "id": "submissionId",
+              "displayName": "submissionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "requesterName",
+              "displayName": "requesterName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "requesterEmail",
+              "displayName": "requesterEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "approverEmail",
+              "displayName": "approverEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "team",
+              "displayName": "team",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "department",
+              "displayName": "department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "commType",
+              "displayName": "commType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "dataType",
+              "displayName": "dataType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceFileLink",
+              "displayName": "audienceFileLink",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceCount",
+              "displayName": "audienceCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "scheduledAt",
+              "displayName": "scheduledAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateName",
+              "displayName": "templateName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "campaignName",
+              "displayName": "campaignName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateParams",
+              "displayName": "templateParams",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "messagePreview",
+              "displayName": "messagePreview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "userName",
+              "displayName": "userName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "wabaNumber",
+              "displayName": "wabaNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "additionalInstructions",
+              "displayName": "additionalInstructions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "submittedAt",
+              "displayName": "submittedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "headers",
+              "displayName": "headers",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "params",
+              "displayName": "params",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "webhookUrl",
+              "displayName": "webhookUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "executionMode",
+              "displayName": "executionMode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "1060e04d-ca11-4852-a2e1-2d81635ff5df",
+      "name": "Update Sheet - Approved",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        224,
+        432
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OuSB67H5iSmdFF2A",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1n1Q4g6TmW1jCtIhkbMnRvRe3Ch11-gkmJi7bgBug2mo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Campaigns",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "submissionId": "={{ $json.query.id }}",
+            "status": "Rejected"
+          },
+          "matchingColumns": [
+            "submissionId"
+          ],
+          "schema": [
+            {
+              "id": "submissionId",
+              "displayName": "submissionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "requesterName",
+              "displayName": "requesterName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "requesterEmail",
+              "displayName": "requesterEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "approverEmail",
+              "displayName": "approverEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "team",
+              "displayName": "team",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "department",
+              "displayName": "department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "commType",
+              "displayName": "commType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "dataType",
+              "displayName": "dataType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceFileLink",
+              "displayName": "audienceFileLink",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceCount",
+              "displayName": "audienceCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "scheduledAt",
+              "displayName": "scheduledAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateName",
+              "displayName": "templateName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "campaignName",
+              "displayName": "campaignName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateParams",
+              "displayName": "templateParams",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "messagePreview",
+              "displayName": "messagePreview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "userName",
+              "displayName": "userName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "wabaNumber",
+              "displayName": "wabaNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "additionalInstructions",
+              "displayName": "additionalInstructions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "submittedAt",
+              "displayName": "submittedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "headers",
+              "displayName": "headers",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "params",
+              "displayName": "params",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "webhookUrl",
+              "displayName": "webhookUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "executionMode",
+              "displayName": "executionMode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "5c26213f-91ed-4164-a17c-cb45ae3bab85",
+      "name": "Update Sheet - Rejected",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        224,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OuSB67H5iSmdFF2A",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "5f4f1ca7-88b6-4101-891e-bf335f36f3ef",
+      "name": "Schedule - Every 5 mins",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1n1Q4g6TmW1jCtIhkbMnRvRe3Ch11-gkmJi7bgBug2mo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Campaigns",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "Approved"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "67661f72-a104-4ab1-a56d-f6df8be932af",
+      "name": "Read Approved Campaigns",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        0,
+        928
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OuSB67H5iSmdFF2A",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst dueCampaigns = [];\n\nfor (const item of $input.all()) {\n  const row = item.json;\n  if (!row['scheduledAt']) continue;\n\n    // Skip if already processed\n  if (['Sent', 'Processing', 'Rejected'].includes(row['status'])) continue;\n  \n  // Parse \"06 05 2026 16:55 IST\" → compare with current IST time\n  const rawTime = row['scheduledAt'].replace(' IST', '').trim();\n  // rawTime = \"06 05 2026 16:55\"\n  const parts = rawTime.split(' ');\n  // parts = [\"06\", \"05\", \"2026\", \"16:55\"]\n  const month = parseInt(parts[0]) - 1;\n  const day = parseInt(parts[1]);\n  const year = parseInt(parts[2]);\n  const [hours, minutes] = parts[3].split(':').map(Number);\n  \n  // Create date in IST (UTC+5:30)\n  const scheduledUTC = new Date(Date.UTC(year, month, day, hours - 5, minutes - 30));\n  \n  const diffMinutes = (now - scheduledUTC) / (1000 * 60);\n  \n  if (diffMinutes >= 0 && diffMinutes <= 10) {\n    dueCampaigns.push({ json: row });\n  }\n}\n\nif (dueCampaigns.length === 0) {\n  return [{ json: { skip: true, message: 'No campaigns due' } }];\n}\n\n// MVP safety: process only one due campaign per schedule run.\n// This prevents downstream nodes using .first() from mixing campaign context.\nreturn [dueCampaigns[0]];"
+      },
+      "id": "5bb59c40-b1ed-4c76-9ea2-97d555853faa",
+      "name": "Filter Due Campaigns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "620533be-bd82-44d4-97c7-19e1f5a1efe6",
+      "name": "Skip if None Due",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        448,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $('Filter Due Campaigns').first().json;\n\nconst fileLink = String(row['audienceFileLink'] || '').trim();\n\nif (!fileLink) {\n  throw new Error(`Audience file link missing for submissionId: ${row['submissionId'] || 'unknown'}`);\n}\n\nreturn [{\n  json: {\n    ...row,\n    audienceFileUrl: fileLink,\n    readyToFetch: true\n  }\n}];"
+      },
+      "id": "9c6f09f0-e4a9-45b6-8971-c6083651bbb6",
+      "name": "Prepare Audience Fetch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.audienceFileUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "ffc55e3e-3235-462e-9e9e-2454c0cdf74b",
+      "name": "Fetch Audience CSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1056,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const csvText = $input.first().json.data || $input.first().json.body || '';\n\n// Get campaign data from due campaign row\nconst campaignData = $('Filter Due Campaigns').first().json;\n\n// -----------------------------\n// 1. Basic CSV parser\n// -----------------------------\n\nfunction parseCsvLine(line) {\n  const result = [];\n  let current = '';\n  let insideQuotes = false;\n\n  for (let i = 0; i < line.length; i++) {\n    const char = line[i];\n    const nextChar = line[i + 1];\n\n    if (char === '\"' && insideQuotes && nextChar === '\"') {\n      current += '\"';\n      i++;\n    } else if (char === '\"') {\n      insideQuotes = !insideQuotes;\n    } else if (char === ',' && !insideQuotes) {\n      result.push(current.trim());\n      current = '';\n    } else {\n      current += char;\n    }\n  }\n\n  result.push(current.trim());\n  return result;\n}\n\nconst lines = csvText\n  .split(/\\r?\\n/)\n  .map(line => line.trim())\n  .filter(Boolean);\n\nif (lines.length < 2) {\n  throw new Error('Audience CSV is empty or missing data rows.');\n}\n\nconst headers = parseCsvLine(lines[0]).map(h =>\n  h.trim().toLowerCase().replace(/\\s+/g, '')\n);\n\n// -----------------------------\n// 2. Required columns from templateParams\n// In Parse Submission, templateParams now stores required columns\n// Example: [\"phone\",\"var1\",\"var2\",\"var3\",\"var4\",\"var5\",\"var6\",\"var7\"]\n// -----------------------------\n\nlet requiredColumns = [];\n\ntry {\n  requiredColumns = JSON.parse(campaignData['templateParams'] || '[]');\n} catch (e) {\n  requiredColumns = [];\n}\n\nrequiredColumns = requiredColumns.map(c =>\n  String(c).trim().toLowerCase().replace(/\\s+/g, '')\n);\n\nif (!requiredColumns.length) {\n  throw new Error('Required CSV columns not found in campaign templateParams.');\n}\n\nconst missingColumns = requiredColumns.filter(col => !headers.includes(col));\n\nif (missingColumns.length) {\n  throw new Error(`Audience CSV missing required columns: ${missingColumns.join(', ')}`);\n}\n\n// -----------------------------\n// 3. Column index map\n// -----------------------------\n\nconst colIndex = {};\nheaders.forEach((header, index) => {\n  colIndex[header] = index;\n});\n\n// -----------------------------\n// 4. Phone normalization\n// -----------------------------\n\nfunction normalizePhone(value) {\n  let mobile = String(value || '').replace(/[^0-9]/g, '');\n\n  if (!mobile) return '';\n\n  if (mobile.length === 10) {\n    mobile = '91' + mobile;\n  }\n\n  if (mobile.length === 13 && mobile.startsWith('091')) {\n    mobile = mobile.substring(1);\n  }\n\n  if (mobile.length === 12 && mobile.startsWith('91')) {\n    return mobile;\n  }\n\n  return '';\n}\n\n// -----------------------------\n// 5. Build row-wise AiSensy payload items\n// -----------------------------\n\nconst output = [];\nconst seen = new Set();\n\nfor (let i = 1; i < lines.length; i++) {\n  const values = parseCsvLine(lines[i]);\n\n  const phoneRaw = values[colIndex.phone];\n  const destination = normalizePhone(phoneRaw);\n\n  if (!destination) continue;\n  if (seen.has(destination)) continue;\n\n  seen.add(destination);\n\n  const varColumns = requiredColumns.filter(col => col !== 'phone');\n\n  const templateParams = varColumns.map(col => {\n    const index = colIndex[col];\n    return values[index] !== undefined ? String(values[index]).trim() : '';\n  });\n\n  // Do not send if any required variable is blank\n  const hasBlankRequiredVar = templateParams.some(v => !v);\n\n  if (hasBlankRequiredVar) {\n    continue;\n  }\n\n  output.push({\n    json: {\n      destination,\n      campaignName: campaignData['campaignName'] || '',\n      userName: campaignData['userName'] || '',\n      templateParams,\n      submissionId: campaignData['submissionId'] || '',\n      requesterEmail: campaignData['requesterEmail'] || '',\n      requesterName: campaignData['requesterName'] || '',\n      team: campaignData['team'] || ''\n    }\n  });\n}\n\nif (!output.length) {\n  throw new Error('No valid audience rows found after phone and variable validation.');\n}\n\n// Phase 1 cap\nreturn output.slice(0, 50000);"
+      },
+      "id": "e932bb6e-c4ae-482b-a637-0c902c906a6c",
+      "name": "Parse Mobile Numbers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://backend.aisensy.com/campaign/t1/api/v2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "=json",
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "jsonBody": "={\n  \"apiKey\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY0ZDM0MjA0OTU3YzU0MTAzZjA0NmVmZCIsIm5hbWUiOiJQVyBWUCIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2MmRiOTU1MTI5ODRkOTJmYzg3YTVkMjIiLCJhY3RpdmVQbGFuIjoiTk9ORSIsImlhdCI6MTY5MTU2NjU5Nn0.q-RyVxO_rHXQ2qs6TSpq-tG7gUriIQ0nxeFP9nSfvdU\",\n  \"campaignName\": \"{{ $json.campaignName }}\",\n  \"destination\": \"{{ $json.destination }}\",\n  \"userName\": \"{{ $json.userName }}\",\n  \"templateParams\": {{ JSON.stringify($json.templateParams) }},\n  \"source\": \"n8n-pw-automation\",\n  \"media\": {},\n  \"buttons\": [],\n  \"carouselCards\": [],\n  \"location\": {},\n  \"attributes\": {},\n  \"paramsFallbackValue\": {\n    \"FirstName\": \"user\"\n  }\n}",
+        "options": {}
+      },
+      "id": "199e05a6-aedf-4ade-9ee4-ebcb51b23220",
+      "name": "Send via AiSensy API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1712,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate results and check for errors\nconst results = $input.all();\nconst submissionId = $('Filter Due Campaigns').first().json['submissionId'] || '';\n\nconst total = results.length;\nconst errors = results.filter(r => r.json.error || r.json.status === 'failed').length;\nconst sent = total - errors;\n\nreturn [{\n  json: {\n    submissionId,\n    totalSent: sent,\n    totalErrors: errors,\n    total,\n    completedAt: new Date().toISOString(),\n    status: errors === 0 ? 'Sent' : 'Sent with Errors'\n  }\n}];"
+      },
+      "id": "e0698917-ac57-4abf-9b4c-66a2b217856a",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1n1Q4g6TmW1jCtIhkbMnRvRe3Ch11-gkmJi7bgBug2mo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Campaigns",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "submissionId": "={{ $json.submissionId }}",
+            "status": "Sent"
+          },
+          "matchingColumns": [
+            "submissionId"
+          ],
+          "schema": [
+            {
+              "id": "submissionId",
+              "displayName": "submissionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "requesterName",
+              "displayName": "requesterName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "requesterEmail",
+              "displayName": "requesterEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "approverEmail",
+              "displayName": "approverEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "team",
+              "displayName": "team",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "department",
+              "displayName": "department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "commType",
+              "displayName": "commType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "dataType",
+              "displayName": "dataType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceFileLink",
+              "displayName": "audienceFileLink",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceCount",
+              "displayName": "audienceCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "scheduledAt",
+              "displayName": "scheduledAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateName",
+              "displayName": "templateName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "campaignName",
+              "displayName": "campaignName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateParams",
+              "displayName": "templateParams",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "messagePreview",
+              "displayName": "messagePreview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "userName",
+              "displayName": "userName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "wabaNumber",
+              "displayName": "wabaNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "additionalInstructions",
+              "displayName": "additionalInstructions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "submittedAt",
+              "displayName": "submittedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "headers",
+              "displayName": "headers",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "params",
+              "displayName": "params",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "webhookUrl",
+              "displayName": "webhookUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "executionMode",
+              "displayName": "executionMode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "388e0ae9-e809-46a0-b89a-e9717b1641a2",
+      "name": "Update Sheet - Sent",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        2144,
+        1008
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OuSB67H5iSmdFF2A",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Read Approved Campaigns').item.json.requesterEmail }}",
+        "subject": "=✅ Your WhatsApp Campaign Has Been Sent — {{ $('Read Approved Campaigns').item.json.submissionId }}",
+        "message": "=<div style='font-family: Arial, sans-serif; max-width: 600px;'>\n  <h2 style='color: #25d366;'>✅ Campaign Sent Successfully</h2>\n  <p>Hi {{ $('Read Approved Campaigns').item.json.requesterName }},</p>\n  <p>Your WhatsApp campaign has been sent successfully.</p>\n  <table style='width:100%; border-collapse:collapse; margin:20px 0;'>\n    <tr style='background:#f5f5f5'><td style='padding:8px; border:1px solid #ddd;'><strong>Submission ID</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $json.submissionId }}</td></tr>\n    <tr><td style='padding:8px; border:1px solid #ddd;'><strong>Total Sent</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $('Aggregate Results').item.json.totalSent }}</td></tr>\n    <tr style='background:#f5f5f5'><td style='padding:8px; border:1px solid #ddd;'><strong>Errors</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $('Aggregate Results').item.json.totalErrors }}</td></tr>\n    <tr><td style='padding:8px; border:1px solid #ddd;'><strong>Completed At</strong></td><td style='padding:8px; border:1px solid #ddd;'>{{ $('Aggregate Results').item.json.completedAt }}</td></tr>\n  </table>\n  <p style='color:#999; font-size:12px;'>PW Campaign Automation</p>\n</div>",
+        "options": {}
+      },
+      "id": "e2548b8a-6628-4e32-a209-dbf7c3f77a07",
+      "name": "Notify Requester - Sent",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        2368,
+        1008
+      ],
+      "webhookId": "5bc2a059-19e7-4549-a8fa-332793d463c1",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "p5WKLG6UxWahjX5X",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.query.email || 'requester@pw.live' }}",
+        "subject": "=❌ Your WhatsApp Campaign Request Was Rejected",
+        "message": "=<div style='font-family: Arial, sans-serif; max-width: 600px;'>\n  <h2 style='color: #e74c3c;'>❌ Campaign Request Rejected</h2>\n  <p>Hi,</p>\n  <p>Your WhatsApp campaign request (ID: <strong>{{ $json.query.id }}</strong>) has been rejected by your approver.</p>\n  <p>Please contact your approver for more details or submit a new request with updated information.</p>\n  <p style='color:#999; font-size:12px;'>PW Campaign Automation</p>\n</div>",
+        "options": {}
+      },
+      "id": "25c34adf-6cbe-4249-869f-b6dd64bfdbf4",
+      "name": "Notify Requester - Rejected",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        448,
+        624
+      ],
+      "webhookId": "2892b4cf-b9c7-4e51-8498-cbb3d6ac7bbf",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "p5WKLG6UxWahjX5X",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1n1Q4g6TmW1jCtIhkbMnRvRe3Ch11-gkmJi7bgBug2mo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Campaigns",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "submissionId": "={{ $json.submissionId }}",
+            "status": "Processing"
+          },
+          "matchingColumns": [
+            "submissionId"
+          ],
+          "schema": [
+            {
+              "id": "submissionId",
+              "displayName": "submissionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "requesterName",
+              "displayName": "requesterName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "requesterEmail",
+              "displayName": "requesterEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "approverEmail",
+              "displayName": "approverEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "team",
+              "displayName": "team",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "department",
+              "displayName": "department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "commType",
+              "displayName": "commType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "dataType",
+              "displayName": "dataType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceFileLink",
+              "displayName": "audienceFileLink",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceCount",
+              "displayName": "audienceCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "scheduledAt",
+              "displayName": "scheduledAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateName",
+              "displayName": "templateName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "campaignName",
+              "displayName": "campaignName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateParams",
+              "displayName": "templateParams",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "messagePreview",
+              "displayName": "messagePreview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "userName",
+              "displayName": "userName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "wabaNumber",
+              "displayName": "wabaNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "additionalInstructions",
+              "displayName": "additionalInstructions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "submittedAt",
+              "displayName": "submittedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "headers",
+              "displayName": "headers",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "params",
+              "displayName": "params",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "webhookUrl",
+              "displayName": "webhookUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "executionMode",
+              "displayName": "executionMode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "6eae65dd-1a8a-478e-838a-48b69eeac3d1",
+      "name": "Update Sheet - Processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        656,
+        1008
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OuSB67H5iSmdFF2A",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1n1Q4g6TmW1jCtIhkbMnRvRe3Ch11-gkmJi7bgBug2mo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Campaigns",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "submissionId": "={{ $json.submissionId }}",
+            "status": "Processing",
+            "failedAt": "={{ new Date().toISOString() }}",
+            "errorReason": "={{ $json.error.message || $json.error || 'Unknown error' }}"
+          },
+          "matchingColumns": [
+            "submissionId"
+          ],
+          "schema": [
+            {
+              "id": "submissionId",
+              "displayName": "submissionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "requesterName",
+              "displayName": "requesterName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "requesterEmail",
+              "displayName": "requesterEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "approverEmail",
+              "displayName": "approverEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "team",
+              "displayName": "team",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "department",
+              "displayName": "department",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "commType",
+              "displayName": "commType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "dataType",
+              "displayName": "dataType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceFileLink",
+              "displayName": "audienceFileLink",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "audienceCount",
+              "displayName": "audienceCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "scheduledAt",
+              "displayName": "scheduledAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateName",
+              "displayName": "templateName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "campaignName",
+              "displayName": "campaignName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "templateParams",
+              "displayName": "templateParams",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "messagePreview",
+              "displayName": "messagePreview",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "userName",
+              "displayName": "userName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "wabaNumber",
+              "displayName": "wabaNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "additionalInstructions",
+              "displayName": "additionalInstructions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "submittedAt",
+              "displayName": "submittedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "errorReason",
+              "displayName": "errorReason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "failedAt",
+              "displayName": "failedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9aefcb35-4210-4b3b-92c6-56248d4491e2",
+      "name": "Update Sheet - Processing1",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1504,
+        816
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OuSB67H5iSmdFF2A",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2087cb73-afc4-4018-893d-596dd208e25c",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1264,
+        1008
+      ],
+      "id": "a22ffc19-5703-4e45-b5db-5ea41e321f0e",
+      "name": "IF: Has Error?"
+    }
+  ],
+  "pinData": {
+    "Schedule - Every 5 mins": [
+      {
+        "json": {
+          "timestamp": "2026-06-08T16:10:19.003+05:30",
+          "Readable date": "June 8th 2026, 4:10:19 pm",
+          "Readable time": "4:10:19 pm",
+          "Day of week": "Monday",
+          "Year": "2026",
+          "Month": "June",
+          "Day of month": "08",
+          "Hour": "16",
+          "Minute": "10",
+          "Second": "19",
+          "Timezone": "Asia/Calcutta (UTC+05:30)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Jotform Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Respond to Jotform",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Parse Submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Submission": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Send Approval Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond Approved",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Sheet - Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rejection Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond Rejected",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Sheet - Rejected",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Requester - Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - Every 5 mins": {
+      "main": [
+        [
+          {
+            "node": "Read Approved Campaigns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Approved Campaigns": {
+      "main": [
+        [
+          {
+            "node": "Filter Due Campaigns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Due Campaigns": {
+      "main": [
+        [
+          {
+            "node": "Skip if None Due",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip if None Due": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Update Sheet - Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Audience Fetch": {
+      "main": [
+        [
+          {
+            "node": "Fetch Audience CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Audience CSV": {
+      "main": [
+        [
+          {
+            "node": "IF: Has Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Mobile Numbers": {
+      "main": [
+        [
+          {
+            "node": "Send via AiSensy API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send via AiSensy API": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Update Sheet - Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Sheet - Sent": {
+      "main": [
+        [
+          {
+            "node": "Notify Requester - Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Sheet - Processing": {
+      "main": [
+        [
+          {
+            "node": "Prepare Audience Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Requester - Sent": {
+      "main": [
+        []
+      ]
+    },
+    "IF: Has Error?": {
+      "main": [
+        [
+          {
+            "node": "Update Sheet - Processing1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Mobile Numbers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "7533cddb-1428-495d-9ebd-9a5a1e493768",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3c56773a2b433e675609f35dc3b713b42bbeae2d6ad21ce1f98b77fba5c1cd94"
+  },
+  "nodeGroups": [],
+  "id": "EPXT3CO0mUJM5Lhj",
+  "tags": []
+}
