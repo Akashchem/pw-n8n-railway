@@ -4,7 +4,7 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 # Railway injects $PORT — n8n must bind to it
-startCommand = "N8N_PORT=$PORT n8n start"
+startCommand = "sh -c 'N8N_PORT=$PORT n8n start'"
 healthcheckPath = "/healthz"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
